@@ -1,0 +1,1 @@
+collector: python -m ibm_calibration_collector.collector --once

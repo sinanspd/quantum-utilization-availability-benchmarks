@@ -87,6 +87,7 @@ class PostgresStore:
         backend: str,
         poll_started_at: datetime,
         poll_finished_at: datetime,
+        raw_backend_summary: dict[str, Any] | None,
         raw_status: dict[str, Any],
         raw_properties: dict[str, Any],
         status_snapshot: BackendStatusSnapshot,
@@ -106,9 +107,10 @@ class PostgresStore:
                       success,
                       properties_last_update_date,
                       backend_version,
+                      raw_backend_summary,
                       raw_status,
                       raw_properties
-                    ) VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s)
                     """,
                     (
                         fetch_cycle_id,
@@ -117,6 +119,7 @@ class PostgresStore:
                         poll_finished_at,
                         parsed_properties.properties_last_update_date,
                         parsed_properties.backend_version or status_snapshot.backend_version,
+                        Jsonb(raw_backend_summary) if raw_backend_summary is not None else None,
                         Jsonb(raw_status),
                         Jsonb(raw_properties),
                     ),
@@ -160,8 +163,8 @@ class PostgresStore:
             """
             INSERT INTO backend_status_snapshots (
               fetch_cycle_id, backend, poll_timestamp_utc, backend_version,
-              pending_jobs, operational, status_msg, raw
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+              pending_jobs, operational, status_name, status_msg, raw, raw_backend
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 fetch_cycle_id,
@@ -170,8 +173,10 @@ class PostgresStore:
                 status.backend_version,
                 status.pending_jobs,
                 status.operational,
+                status.status_name,
                 status.status_msg,
                 Jsonb(status.raw),
+                Jsonb(status.raw_backend) if status.raw_backend is not None else None,
             ),
         )
 

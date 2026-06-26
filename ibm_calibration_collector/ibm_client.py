@@ -20,7 +20,7 @@ class IBMQuantumClient:
         api_key: str,
         service_crn: str,
         host: str = "quantum.cloud.ibm.com",
-        api_version: str = "2026-04-15",
+        api_version: str = "2026-02-15",
         timeout_seconds: int = 60,
     ) -> None:
         self.api_key = api_key
@@ -37,7 +37,11 @@ class IBMQuantumClient:
     def get_backend_properties(self, backend: str) -> dict[str, Any]:
         return self._get_json(f"/api/v1/backends/{backend}/properties")
 
-    def _get_json(self, path: str) -> dict[str, Any]:
+    def list_backends(self, *, include_wait_time_seconds: bool = False) -> dict[str, Any]:
+        params = {"fields": "wait_time_seconds"} if include_wait_time_seconds else None
+        return self._get_json("/api/v1/backends", params=params)
+
+    def _get_json(self, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         token = self._get_bearer_token()
         url = f"https://{self.host}{path}"
         response = self.session.get(
@@ -48,6 +52,7 @@ class IBMQuantumClient:
                 "Service-CRN": self.service_crn,
                 "IBM-API-Version": self.api_version,
             },
+            params=params,
             timeout=self.timeout_seconds,
         )
         response.raise_for_status()

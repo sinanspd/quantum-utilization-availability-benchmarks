@@ -16,15 +16,36 @@ def parse_status(
     backend: str,
     status_json: dict[str, Any],
     poll_timestamp_utc: datetime,
+    backend_json: dict[str, Any] | None = None,
 ) -> BackendStatusSnapshot:
+    backend_status = _as_dict(backend_json.get("status")) if backend_json is not None else None
+    status_name = _first_str(
+        status_json.get("status"),
+        _dict_get(backend_status, "name"),
+    )
+
     return BackendStatusSnapshot(
         backend=backend,
         poll_timestamp_utc=poll_timestamp_utc,
         backend_version=_as_str(status_json.get("backend_version")),
-        pending_jobs=_as_int(status_json.get("pending_jobs")),
-        operational=_as_bool(status_json.get("operational")),
-        status_msg=_as_str(status_json.get("status_msg")),
+        pending_jobs=_first_int(
+            _dict_get(backend_json, "queue_length"),
+            status_json.get("length_queue"),
+            status_json.get("pending_jobs"),
+        ),
+        operational=_first_bool(
+            status_json.get("state"),
+            status_json.get("operational"),
+            _operational_from_status_name(status_name),
+        ),
+        status_name=status_name,
+        status_msg=_first_str(
+            status_json.get("message"),
+            status_json.get("status_msg"),
+            _dict_get(backend_status, "reason"),
+        ),
         raw=status_json,
+        raw_backend=backend_json,
     )
 
 
@@ -135,6 +156,14 @@ def _as_str(value: Any) -> str | None:
     return str(value)
 
 
+def _first_str(*values: Any) -> str | None:
+    for value in values:
+        parsed = _as_str(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _as_int(value: Any) -> int | None:
     if value is None:
         return None
@@ -142,6 +171,14 @@ def _as_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _first_int(*values: Any) -> int | None:
+    for value in values:
+        parsed = _as_int(value)
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _as_float(value: Any) -> float | None:
@@ -165,3 +202,34 @@ def _as_bool(value: Any) -> bool | None:
         if lowered in {"false", "0", "no"}:
             return False
     return bool(value)
+
+
+def _first_bool(*values: Any) -> bool | None:
+    for value in values:
+        parsed = _as_bool(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    return None
+
+
+def _dict_get(mapping: dict[str, Any] | None, key: str) -> Any:
+    if mapping is None:
+        return None
+    return mapping.get(key)
+
+
+def _operational_from_status_name(status_name: str | None) -> bool | None:
+    if status_name is None:
+        return None
+    normalized = status_name.strip().lower()
+    if normalized in {"online", "active", "available", "running"}:
+        return True
+    if normalized in {"offline", "paused", "maintenance", "unavailable"}:
+        return False
+    return None

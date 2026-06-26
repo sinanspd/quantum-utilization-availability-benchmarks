@@ -12,8 +12,10 @@ class BackendStatusSnapshot:
     backend_version: str | None
     pending_jobs: int | None
     operational: bool | None
+    status_name: str | None
     status_msg: str | None
     raw: dict[str, Any]
+    raw_backend: dict[str, Any] | None
 
 
 @dataclass(frozen=True)

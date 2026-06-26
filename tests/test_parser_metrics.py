@@ -5,7 +5,7 @@ from ibm_calibration_collector.metrics import (
     latest_edge_dates,
     latest_qubit_dates,
 )
-from ibm_calibration_collector.parser import parse_properties
+from ibm_calibration_collector.parser import parse_properties, parse_status
 
 
 def test_parse_and_metrics():
@@ -26,7 +26,7 @@ def test_parse_and_metrics():
         "gates": [
             {
                 "gate": "cz",
-                "qubits": [1, 0],
+                "qubits": ["1", "0"],
                 "parameters": [
                     {"name": "gate_error", "value": 0.002, "unit": "", "date": "2026-06-15T11:15:00Z"},
                     {"name": "gate_length", "value": 1e-7, "unit": "s", "date": "2026-06-15T11:20:00Z"},
@@ -55,3 +55,42 @@ def test_parse_and_metrics():
     assert metrics.edges_calibrated_since_last_fetch == ["0-1"]
     assert metrics.oldest_qubit == 1
     assert metrics.max_qubit_calibration_age_seconds == 7200.0
+
+
+def test_parse_status_uses_documented_backend_queue_fields():
+    poll = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+    status = {
+        "backend_version": "1.2.3",
+        "state": True,
+        "status": "active",
+        "message": "Ready",
+        "length_queue": 3,
+    }
+    backend_summary = {
+        "name": "ibm_test",
+        "queue_length": 7,
+        "status": {"name": "online", "reason": "QPU is available"},
+    }
+
+    parsed = parse_status("ibm_test", status, poll, backend_json=backend_summary)
+
+    assert parsed.backend_version == "1.2.3"
+    assert parsed.pending_jobs == 7
+    assert parsed.operational is True
+    assert parsed.status_name == "active"
+    assert parsed.status_msg == "Ready"
+    assert parsed.raw == status
+    assert parsed.raw_backend == backend_summary
+
+
+def test_parse_status_falls_back_to_status_queue_length():
+    poll = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+    parsed = parse_status(
+        "ibm_test",
+        {"state": False, "message": "Paused", "length_queue": 4},
+        poll,
+    )
+
+    assert parsed.pending_jobs == 4
+    assert parsed.operational is False
+    assert parsed.status_msg == "Paused"

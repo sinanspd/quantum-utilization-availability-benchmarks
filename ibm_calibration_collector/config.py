@@ -22,7 +22,7 @@ class CollectorConfig:
         crn = _required("IBM_SERVICE_CRN")
         database_url = _required("DATABASE_URL")
         host = os.getenv("IBM_HOST", "quantum.cloud.ibm.com").strip()
-        api_version = os.getenv("IBM_API_VERSION", "2026-04-15").strip()
+        api_version = os.getenv("IBM_API_VERSION", "2026-02-15").strip()
         backends_raw = _required("IBM_BACKENDS")
         backends = [b.strip() for b in backends_raw.split(",") if b.strip()]
         if not backends:

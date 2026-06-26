@@ -9,10 +9,14 @@ CREATE TABLE IF NOT EXISTS fetch_cycles (
   error_message TEXT,
   properties_last_update_date TIMESTAMPTZ,
   backend_version TEXT,
+  raw_backend_summary JSONB,
   raw_status JSONB,
   raw_properties JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE fetch_cycles
+  ADD COLUMN IF NOT EXISTS raw_backend_summary JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_fetch_cycles_backend_started
   ON fetch_cycles (backend, poll_started_at DESC);
@@ -28,9 +32,17 @@ CREATE TABLE IF NOT EXISTS backend_status_snapshots (
   backend_version TEXT,
   pending_jobs INTEGER,
   operational BOOLEAN,
+  status_name TEXT,
   status_msg TEXT,
-  raw JSONB NOT NULL
+  raw JSONB NOT NULL,
+  raw_backend JSONB
 );
+
+ALTER TABLE backend_status_snapshots
+  ADD COLUMN IF NOT EXISTS status_name TEXT;
+
+ALTER TABLE backend_status_snapshots
+  ADD COLUMN IF NOT EXISTS raw_backend JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_backend_status_backend_poll
   ON backend_status_snapshots (backend, poll_timestamp_utc DESC);
@@ -125,7 +137,8 @@ SELECT
   s.pending_jobs,
   s.operational,
   s.status_msg,
-  f.properties_last_update_date
+  f.properties_last_update_date,
+  s.status_name
 FROM fetch_cycle_metrics m
 JOIN fetch_cycles f ON f.id = m.fetch_cycle_id
 LEFT JOIN backend_status_snapshots s ON s.fetch_cycle_id = m.fetch_cycle_id;

@@ -5,7 +5,7 @@ import logging
 import os
 import time
 from dataclasses import replace
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from .config import CollectorConfig
 from .db import PostgresStore
@@ -23,6 +23,7 @@ def collect_backend_once(
     config: CollectorConfig,
     client: IBMQuantumClient,
     store: PostgresStore,
+    raw_backend_summary: dict[str, Any] | None = None,
 ) -> str:
     poll_started_at = utc_now()
     try:
@@ -30,7 +31,12 @@ def collect_backend_once(
         raw_properties = client.get_backend_properties(backend)
         poll_finished_at = utc_now()
 
-        status = parse_status(backend, raw_status, poll_finished_at)
+        status = parse_status(
+            backend,
+            raw_status,
+            poll_finished_at,
+            backend_json=raw_backend_summary,
+        )
         properties = parse_properties(
             backend,
             raw_properties,
@@ -59,6 +65,7 @@ def collect_backend_once(
             backend=backend,
             poll_started_at=poll_started_at,
             poll_finished_at=poll_finished_at,
+            raw_backend_summary=raw_backend_summary,
             raw_status=raw_status,
             raw_properties=raw_properties,
             status_snapshot=status,
@@ -99,8 +106,36 @@ def run_once(config: CollectorConfig, *, init_db: bool = False) -> None:
         api_version=config.ibm_api_version,
         timeout_seconds=config.request_timeout_seconds,
     )
+    try:
+        raw_backend_summaries = get_backend_summaries(client)
+    except Exception:  # noqa: BLE001 - status/properties may still be collectible.
+        LOG.exception("failed to fetch backend queue summaries; falling back to status payloads")
+        raw_backend_summaries = {}
     for backend in config.backends:
-        collect_backend_once(backend=backend, config=config, client=client, store=store)
+        collect_backend_once(
+            backend=backend,
+            config=config,
+            client=client,
+            store=store,
+            raw_backend_summary=raw_backend_summaries.get(backend),
+        )
+
+
+def get_backend_summaries(client: IBMQuantumClient) -> dict[str, dict[str, Any]]:
+    raw_backends = client.list_backends(include_wait_time_seconds=True)
+    devices = raw_backends.get("devices")
+    if not isinstance(devices, list):
+        raise TypeError("backends.devices must be a list")
+
+    summaries: dict[str, dict[str, Any]] = {}
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        name = device.get("name")
+        if name is None:
+            continue
+        summaries[str(name)] = device
+    return summaries
 
 
 def run_forever(config: CollectorConfig, *, init_db: bool = False) -> NoReturn:
