@@ -6,7 +6,10 @@ from .models import FetchCycleMetrics, GatePropertySnapshot, QubitPropertySnapsh
 from .time_utils import seconds_between
 
 
-def latest_qubit_dates(rows: list[QubitPropertySnapshot]) -> dict[int, datetime]:
+def latest_qubit_dates(
+    rows: list[QubitPropertySnapshot],
+    gate_rows: list[GatePropertySnapshot] | None = None,
+) -> dict[int, datetime]:
     latest: dict[int, datetime] = {}
     for row in rows:
         if row.property_date is None:
@@ -14,6 +17,13 @@ def latest_qubit_dates(rows: list[QubitPropertySnapshot]) -> dict[int, datetime]
         old = latest.get(row.qubit)
         if old is None or row.property_date > old:
             latest[row.qubit] = row.property_date
+    for row in gate_rows or []:
+        if len(row.qubits) != 1 or row.property_date is None:
+            continue
+        qubit = row.qubits[0]
+        old = latest.get(qubit)
+        if old is None or row.property_date > old:
+            latest[qubit] = row.property_date
     return latest
 
 

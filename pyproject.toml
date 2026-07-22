@@ -8,8 +8,19 @@ dependencies = [
   "psycopg[binary]>=3.2.0",
 ]
 
+[project.optional-dependencies]
+analysis = [
+  "numpy>=2.0.0",
+  "pandas>=2.2.0",
+  "scipy>=1.13.0",
+]
+
 [project.scripts]
 ibm-calibration-collector = "ibm_calibration_collector.collector:main"
+ibm-calibration-analyze = "ibm_calibration_collector.analysis:main"
 
 [tool.ruff]
 line-length = 100
+
+[tool.setuptools.packages.find]
+include = ["ibm_calibration_collector*"]

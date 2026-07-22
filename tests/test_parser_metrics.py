@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
 
+import pytest
+
+from ibm_calibration_collector.ibm_client import IBMQuantumClient
 from ibm_calibration_collector.metrics import (
     compute_fetch_cycle_metrics,
     latest_edge_dates,
@@ -25,6 +28,18 @@ def test_parse_and_metrics():
         ],
         "gates": [
             {
+                "gate": "sx",
+                "qubits": ["0"],
+                "parameters": [
+                    {
+                        "name": "gate_error",
+                        "value": 0.001,
+                        "unit": "",
+                        "date": "2026-06-15T11:40:00Z",
+                    }
+                ],
+            },
+            {
                 "gate": "cz",
                 "qubits": ["1", "0"],
                 "parameters": [
@@ -35,9 +50,9 @@ def test_parse_and_metrics():
         ],
     }
     parsed = parse_properties("ibm_test", props, poll, edge_id_mode="undirected")
-    q_dates = latest_qubit_dates(parsed.qubit_properties)
+    q_dates = latest_qubit_dates(parsed.qubit_properties, parsed.gate_properties)
     e_dates = latest_edge_dates(parsed.gate_properties)
-    assert q_dates[0].isoformat() == "2026-06-15T11:30:00+00:00"
+    assert q_dates[0].isoformat() == "2026-06-15T11:40:00+00:00"
     assert q_dates[1].isoformat() == "2026-06-15T10:00:00+00:00"
     assert e_dates["0-1"].isoformat() == "2026-06-15T11:20:00+00:00"
 
@@ -48,7 +63,7 @@ def test_parse_and_metrics():
         current_edge_dates=e_dates,
         previous_fetch_cycle_id="prev",
         previous_poll_timestamp_utc=datetime(2026, 6, 15, 11, 0, tzinfo=timezone.utc),
-        previous_qubit_dates={0: datetime(2026, 6, 15, 11, 30, tzinfo=timezone.utc), 1: datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)},
+        previous_qubit_dates={0: datetime(2026, 6, 15, 11, 40, tzinfo=timezone.utc), 1: datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)},
         previous_edge_dates={"0-1": datetime(2026, 6, 15, 11, 0, tzinfo=timezone.utc)},
     )
     assert metrics.qubits_calibrated_since_last_fetch == [1]
@@ -94,3 +109,29 @@ def test_parse_status_falls_back_to_status_queue_length():
     assert parsed.pending_jobs == 4
     assert parsed.operational is False
     assert parsed.status_msg == "Paused"
+
+
+def test_parse_properties_requires_qubits_and_gates():
+    poll = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(
+        ValueError,
+        match="backend properties JSON missing required qubits/gates fields",
+    ):
+        parse_properties("ibm_test", {"qubits": []}, poll)
+
+
+def test_ibm_client_rejects_json_error_payload(monkeypatch):
+    class ErrorResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"errors": [{"code": "backend_unavailable"}]}
+
+    client = IBMQuantumClient("api-key", "service-crn")
+    monkeypatch.setattr(client, "_get_bearer_token", lambda: "token")
+    monkeypatch.setattr(client.session, "get", lambda *args, **kwargs: ErrorResponse())
+
+    with pytest.raises(RuntimeError, match="IBM API returned errors"):
+        client.get_backend_properties("ibm_test")

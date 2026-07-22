@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import psycopg
 from psycopg import Connection
@@ -59,11 +59,20 @@ class PostgresStore:
             q_rows = conn.execute(
                 """
                 SELECT qubit, max(property_date) AS latest_date
-                FROM qubit_property_snapshots
-                WHERE fetch_cycle_id = %s AND property_date IS NOT NULL
+                FROM (
+                  SELECT qubit, property_date
+                  FROM qubit_property_snapshots
+                  WHERE fetch_cycle_id = %s AND property_date IS NOT NULL
+                  UNION ALL
+                  SELECT qubits[1] AS qubit, property_date
+                  FROM gate_property_snapshots
+                  WHERE fetch_cycle_id = %s
+                    AND cardinality(qubits) = 1
+                    AND property_date IS NOT NULL
+                ) AS qubit_calibration_dates
                 GROUP BY qubit
                 """,
-                (fetch_id,),
+                (fetch_id, fetch_id),
             ).fetchall()
             e_rows = conn.execute(
                 """

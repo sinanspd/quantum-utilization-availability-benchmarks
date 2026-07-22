@@ -59,6 +59,8 @@ class IBMQuantumClient:
         data = response.json()
         if not isinstance(data, dict):
             raise TypeError(f"Expected object from {url}, got {type(data).__name__}")
+        if data.get("errors"):
+            raise RuntimeError(f"IBM API returned errors from {url}: {data['errors']}")
         return data
 
     def _get_bearer_token(self) -> str:

@@ -47,7 +47,10 @@ def collect_backend_once(
         prev_fetch_id, prev_poll_ts, prev_qubit_dates, prev_edge_dates = (
             store.get_previous_summaries(backend)
         )
-        current_qubit_dates = latest_qubit_dates(properties.qubit_properties)
+        current_qubit_dates = latest_qubit_dates(
+            properties.qubit_properties,
+            properties.gate_properties,
+        )
         current_edge_dates = latest_edge_dates(properties.gate_properties)
 
         metrics = compute_fetch_cycle_metrics(

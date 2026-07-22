@@ -1,4 +1,8 @@
 .DS_Store
+.env
 ./tests/__pycache__/
 ibm_calibration_collector/__pycache__/
 tests/__pycache__/
+output/
+.venv/
+*.egg-info/

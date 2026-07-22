@@ -55,6 +55,9 @@ def parse_properties(
     poll_timestamp_utc: datetime,
     edge_id_mode: str = "undirected",
 ) -> ParsedBackendProperties:
+    if "qubits" not in properties_json or "gates" not in properties_json:
+        raise ValueError("backend properties JSON missing required qubits/gates fields")
+
     last_update = parse_datetime(properties_json.get("last_update_date"))
     backend_version = _as_str(properties_json.get("backend_version"))
 
