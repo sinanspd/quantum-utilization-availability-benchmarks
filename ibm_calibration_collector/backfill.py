@@ -320,6 +320,36 @@ def prepare_indexes(database_url: str) -> None:
             LOG.info("index ready: %s", name)
 
 
+def prepare_with_retries(
+    database_url: str,
+    *,
+    skip_index_preparation: bool,
+    max_retries: int,
+) -> None:
+    """Prepare durable state and indexes, reconnecting after transient RDS timeouts."""
+    retries = 0
+    while True:
+        try:
+            ensure_control_schema(database_url)
+            if not skip_index_preparation:
+                prepare_indexes(database_url)
+            return
+        except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+            if retries >= max_retries:
+                raise
+            retries += 1
+            delay = min(60, 2**retries)
+            LOG.warning(
+                "database connection interrupted during preparation (%s/%s); "
+                "rechecking indexes in %ss: %s",
+                retries,
+                max_retries,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+
+
 def acquire_lock(conn: Connection[Any]) -> None:
     row = conn.execute(
         "SELECT pg_try_advisory_lock(hashtext(%s)) AS acquired",
@@ -764,9 +794,11 @@ def main(argv: list[str] | None = None) -> None:
         print_status(database_url)
         return
 
-    ensure_control_schema(database_url)
-    if not args.skip_index_preparation:
-        prepare_indexes(database_url)
+    prepare_with_retries(
+        database_url,
+        skip_index_preparation=args.skip_index_preparation,
+        max_retries=args.max_retries,
+    )
     if args.prepare_only:
         LOG.info("backfill preparation complete")
         return
