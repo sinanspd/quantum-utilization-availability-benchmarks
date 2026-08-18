@@ -67,6 +67,12 @@ CREATE INDEX IF NOT EXISTS idx_qubit_props_backend_poll
 CREATE INDEX IF NOT EXISTS idx_qubit_props_backend_qubit_name_date
   ON qubit_property_snapshots (backend, qubit, property_name, property_date DESC);
 
+-- These indexes make historical metrics reconstruction proportional to the selected
+-- fetch-cycle batch instead of requiring a full snapshot-table scan for every batch.
+CREATE INDEX IF NOT EXISTS idx_qubit_props_fetch_cycle_calibration
+  ON qubit_property_snapshots (fetch_cycle_id, qubit, property_date DESC)
+  WHERE property_date IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS gate_property_snapshots (
   id BIGSERIAL PRIMARY KEY,
   fetch_cycle_id UUID NOT NULL REFERENCES fetch_cycles(id) ON DELETE CASCADE,
@@ -89,6 +95,14 @@ CREATE INDEX IF NOT EXISTS idx_gate_props_backend_poll
 
 CREATE INDEX IF NOT EXISTS idx_gate_props_backend_edge_param_date
   ON gate_property_snapshots (backend, edge_id, parameter_name, property_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_gate_props_fetch_cycle_one_qubit_calibration
+  ON gate_property_snapshots (fetch_cycle_id, (qubits[1]), property_date DESC)
+  WHERE cardinality(qubits) = 1 AND property_date IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_gate_props_fetch_cycle_edge_calibration
+  ON gate_property_snapshots (fetch_cycle_id, edge_id, property_date DESC)
+  WHERE edge_id IS NOT NULL AND property_date IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS fetch_cycle_metrics (
   fetch_cycle_id UUID PRIMARY KEY REFERENCES fetch_cycles(id) ON DELETE CASCADE,
@@ -120,6 +134,57 @@ CREATE TABLE IF NOT EXISTS fetch_cycle_metrics (
 
 CREATE INDEX IF NOT EXISTS idx_fetch_cycle_metrics_backend_poll
   ON fetch_cycle_metrics (backend, poll_timestamp_utc DESC);
+
+-- Durable state for the restart-safe historical metrics backfill. A progress cursor is
+-- committed in the same transaction as each metrics batch.
+CREATE TABLE IF NOT EXISTS fetch_cycle_metrics_backfill_runs (
+  run_id UUID PRIMARY KEY,
+  definition_version TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('running', 'failed', 'completed')),
+  batch_size INTEGER NOT NULL CHECK (batch_size > 0),
+  source_created_at_cutoff TIMESTAMPTZ NOT NULL,
+  total_cycle_count BIGINT NOT NULL DEFAULT 0,
+  processed_cycle_count BIGINT NOT NULL DEFAULT 0,
+  invalid_cycle_count BIGINT NOT NULL DEFAULT 0,
+  batch_count BIGINT NOT NULL DEFAULT 0,
+  last_sequence_no BIGINT NOT NULL DEFAULT 0,
+  last_backend TEXT,
+  last_poll_started_at TIMESTAMPTZ,
+  last_fetch_cycle_id UUID,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
+  error_message TEXT
+);
+
+ALTER TABLE fetch_cycle_metrics_backfill_runs
+  ADD COLUMN IF NOT EXISTS last_sequence_no BIGINT NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_fetch_cycle_metrics_backfill_runs_status
+  ON fetch_cycle_metrics_backfill_runs (status, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS fetch_cycle_metrics_backfill_items (
+  run_id UUID NOT NULL REFERENCES fetch_cycle_metrics_backfill_runs(run_id) ON DELETE CASCADE,
+  sequence_no BIGINT NOT NULL,
+  fetch_cycle_id UUID NOT NULL,
+  backend TEXT NOT NULL,
+  poll_started_at TIMESTAMPTZ NOT NULL,
+  poll_timestamp_utc TIMESTAMPTZ NOT NULL,
+  prev_fetch_cycle_id UUID,
+  prev_poll_timestamp_utc TIMESTAMPTZ,
+  PRIMARY KEY (run_id, sequence_no),
+  UNIQUE (run_id, fetch_cycle_id)
+);
+
+CREATE TABLE IF NOT EXISTS fetch_cycle_metrics_backfill_audit (
+  run_id UUID NOT NULL,
+  backed_up_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  fetch_cycle_id UUID NOT NULL,
+  reason TEXT NOT NULL,
+  fetch_cycle_before JSONB NOT NULL,
+  metrics_before JSONB,
+  PRIMARY KEY (run_id, fetch_cycle_id)
+);
 
 -- Handy interval-level view for downstream analysis.
 CREATE OR REPLACE VIEW calibration_interval_observations AS

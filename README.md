@@ -212,22 +212,65 @@ Historical raw one-qubit gate rows are already present, but older `fetch_cycle_m
 rows did not use them when calculating qubit freshness. The idempotent backfill also
 quarantines historical IBM error payloads that were incorrectly marked successful.
 
-Deploy the corrected collector first (or pause the old collector) so new rows are not written
-with the old definition while the backfill runs.
+Deploy the corrected collector first so new rows use the corrected definition. The recommended
+backfill is restart-safe and can run while the corrected collector continues writing: it freezes
+its input at a durable cutoff and processes only rows at or before that cutoff.
 
-Run a safe dry run first. This executes the complete reconstruction and then rolls it back:
-
-```bash
-psql "$DATABASE_URL" -X -f sql/backfill_fetch_cycle_metrics.sql
-```
-
-Review the printed invalid/valid cycle counts. To commit the same backfill:
+Prepare the supporting indexes first. They are built concurrently so collector writes can
+continue, and an interrupted invalid index is repaired on the next run:
 
 ```bash
-psql "$DATABASE_URL" -X -v apply=1 -f sql/backfill_fetch_cycle_metrics.sql
+python -m ibm_calibration_collector.backfill --prepare-only
 ```
 
-On commit, invalid fetches are marked unsuccessful, their misleading derived metrics rows
-are removed, and their previous state is retained in
+Start the backfill with 500 fetch cycles per transaction:
+
+```bash
+python -m ibm_calibration_collector.backfill --batch-size 500
+```
+
+Each metrics batch and its progress cursor commit atomically. If the process or connection stops,
+run the same command again and it resumes the newest incomplete run. Only the active batch is
+rolled back. To inspect progress:
+
+```bash
+python -m ibm_calibration_collector.backfill --status
+```
+
+For a short validation run, commit one batch and stop cleanly:
+
+```bash
+python -m ibm_calibration_collector.backfill --batch-size 100 --max-batches 1
+```
+
+The next normal invocation resumes that run using its original batch size. Use `--run-id UUID`
+to select a particular incomplete run, or `--new-run` only when intentionally reconstructing the
+entire frozen data set again. A database advisory lock prevents concurrent backfill processes.
+
+Invalid historical error payloads are marked unsuccessful in the initialization transaction,
+their misleading metrics rows are removed, and their previous state is retained in
 `fetch_cycle_metrics_backfill_audit`. Valid metrics are rebuilt from raw qubit properties,
-one-qubit gate parameters, and two-qubit edge parameters. Re-running the script is safe.
+one-qubit gate parameters, and two-qubit edge parameters.
+
+The older all-at-once SQL remains available at `sql/backfill_fetch_cycle_metrics.sql` for a
+transactional dry run on small databases. It is not recommended for the production RDS data set.
+
+### Running detached on Heroku
+
+The command reads `DATABASE_URL` inside the dyno, so credentials do not need to be placed in the
+command line:
+
+```bash
+heroku run:detached --app qurator-calibration-collector \
+  python -m ibm_calibration_collector.backfill --batch-size 500
+```
+
+Find the detached dyno and follow its output:
+
+```bash
+heroku ps --app qurator-calibration-collector
+heroku logs --tail --app qurator-calibration-collector --dyno run.N
+```
+
+If Heroku cycles the dyno, submit the same detached command again; it resumes from the last
+committed batch.

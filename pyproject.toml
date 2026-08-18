@@ -18,6 +18,7 @@ analysis = [
 [project.scripts]
 ibm-calibration-collector = "ibm_calibration_collector.collector:main"
 ibm-calibration-analyze = "ibm_calibration_collector.analysis:main"
+ibm-calibration-backfill = "ibm_calibration_collector.backfill:main"
 
 [tool.ruff]
 line-length = 100
