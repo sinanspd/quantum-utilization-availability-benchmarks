@@ -1,5 +1,7 @@
 .DS_Store
 .env
+paper_assets/
+tmp/
 ./tests/__pycache__/
 ibm_calibration_collector/__pycache__/
 tests/__pycache__/
