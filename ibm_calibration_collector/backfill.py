@@ -119,14 +119,17 @@ FROM (
   SELECT snapshot.fetch_cycle_id, snapshot.qubit, snapshot.property_date
   FROM qubit_property_snapshots snapshot
   JOIN backfill_relevant_cycles relevant USING (fetch_cycle_id)
-  WHERE snapshot.property_date IS NOT NULL
+  WHERE lower(snapshot.property_name) <> 'operational'
+    AND snapshot.property_date IS NOT NULL
 
   UNION ALL
 
   SELECT snapshot.fetch_cycle_id, snapshot.qubits[1], snapshot.property_date
   FROM gate_property_snapshots snapshot
   JOIN backfill_relevant_cycles relevant USING (fetch_cycle_id)
-  WHERE cardinality(snapshot.qubits) = 1 AND snapshot.property_date IS NOT NULL
+  WHERE cardinality(snapshot.qubits) = 1
+    AND lower(snapshot.parameter_name) <> 'operational'
+    AND snapshot.property_date IS NOT NULL
 ) dates
 GROUP BY dates.fetch_cycle_id, dates.qubit;
 
@@ -136,7 +139,9 @@ CREATE TEMP TABLE backfill_edge_latest ON COMMIT DROP AS
 SELECT snapshot.fetch_cycle_id, snapshot.edge_id, max(snapshot.property_date) AS latest_date
 FROM gate_property_snapshots snapshot
 JOIN backfill_relevant_cycles relevant USING (fetch_cycle_id)
-WHERE snapshot.edge_id IS NOT NULL AND snapshot.property_date IS NOT NULL
+WHERE snapshot.edge_id IS NOT NULL
+  AND lower(snapshot.parameter_name) <> 'operational'
+  AND snapshot.property_date IS NOT NULL
 GROUP BY snapshot.fetch_cycle_id, snapshot.edge_id;
 
 CREATE UNIQUE INDEX ON backfill_edge_latest (fetch_cycle_id, edge_id);

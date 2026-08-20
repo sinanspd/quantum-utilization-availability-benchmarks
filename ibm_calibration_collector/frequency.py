@@ -235,49 +235,84 @@ def plot_topology_heatmap(component_cadence: pd.DataFrame, backend: str, outpath
     edge_freq = np.array([G.edges[e].get("edge_freq", np.nan) for e in G.edges()])
 
     fig, ax = plt.subplots(figsize=(12, 9))
-    ax.set_title(f"{backend}: topology heat map of update frequency")
+    ax.set_title(
+        f"{backend}: Edge Update Cadence Across the Coupling Graph"
+    )
 
     if len(edge_freq) > 0:
-        edge_norm = colors.Normalize(vmin=float(np.nanmin(edge_freq)), vmax=float(np.nanmax(edge_freq)))
-        edge_colors = cm.viridis(edge_norm(edge_freq))
-        widths = 0.5 + 5.0 * (
-            (edge_freq - np.nanmin(edge_freq))
-            / (np.nanmax(edge_freq) - np.nanmin(edge_freq) + 1e-12)
+        # Edge frequencies are strongly right-skewed.  A logarithmic
+        # normalization prevents the majority of edges from collapsing
+        # into the lowest color range.
+        positive_edge_freq = edge_freq[edge_freq > 0]
+
+        edge_norm = colors.LogNorm(
+            vmin=float(np.nanmin(positive_edge_freq)),
+            vmax=float(np.nanmax(positive_edge_freq)),
         )
-        nx.draw_networkx_edges(G, pos, ax=ax, edge_color=edge_colors, width=widths, alpha=0.9)
 
-        edge_sm = cm.ScalarMappable(norm=edge_norm, cmap=cm.viridis)
+        edge_colors = cm.viridis(edge_norm(edge_freq))
+
+        nx.draw_networkx_edges(
+            G,
+            pos,
+            ax=ax,
+            edge_color=edge_colors,
+            width=2.0,
+            alpha=0.9,
+        )
+
+        edge_sm = cm.ScalarMappable(
+            norm=edge_norm,
+            cmap=cm.viridis,
+        )
         edge_sm.set_array([])
-        cbar1 = fig.colorbar(edge_sm, ax=ax, fraction=0.030, pad=0.01)
-        cbar1.set_label("edge events per day")
 
-    if len(node_freq) > 0:
-        node_norm = colors.Normalize(vmin=float(np.nanmin(node_freq)), vmax=float(np.nanmax(node_freq)))
-        node_colors = cm.plasma(node_norm(node_freq))
-        nx.draw_networkx_nodes(G, pos, ax=ax, node_color=node_colors, node_size=45, linewidths=0.2)
+        cbar1 = fig.colorbar(
+            edge_sm,
+            ax=ax,
+            fraction=0.030,
+            pad=0.02,
+        )
+        cbar1.set_label("Edge update events per day")
 
-        node_sm = cm.ScalarMappable(norm=node_norm, cmap=cm.plasma)
-        node_sm.set_array([])
-        cbar2 = fig.colorbar(node_sm, ax=ax, fraction=0.030, pad=0.04)
-        cbar2.set_label("qubit events per day")
+    # if len(node_freq) > 0:
+    #     node_norm = colors.Normalize(vmin=float(np.nanmin(node_freq)), vmax=float(np.nanmax(node_freq)))
+    #     node_colors = cm.plasma(node_norm(node_freq))
+    #     nx.draw_networkx_nodes(G, pos, ax=ax, node_color=node_colors, node_size=45, linewidths=0.2)
 
-    counts = edge["calibration_event_count"]
-    max_row = edge.loc[counts.idxmax()]
-    min_row = edge.loc[counts.idxmin()]
-    ratio = float(counts.max()) / float(counts.min())
-
-    ax.text(
-        0.01,
-        0.01,
-        f"Edge full-period max/min count ratio = {ratio:.2f}\n"
-        f"Peak edge = {max_row['component_id']} ({int(max_row['calibration_event_count'])} events); "
-        f"min edge = {min_row['component_id']} ({int(min_row['calibration_event_count'])} events)",
-        transform=ax.transAxes,
-        fontsize=9,
-        va="bottom",
-        ha="left",
-        bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+    #     node_sm = cm.ScalarMappable(norm=node_norm, cmap=cm.plasma)
+    #     node_sm.set_array([])
+    #     cbar2 = fig.colorbar(node_sm, ax=ax, fraction=0.030, pad=0.04)
+    #     cbar2.set_label("qubit events per day")
+    # Qubit cadence is comparatively homogeneous, so display qubits
+    # uniformly and reserve the heat scale for edge-frequency variation.
+    nx.draw_networkx_nodes(
+        G,
+        pos,
+        ax=ax,
+        node_size=45,
+        node_color="lightgray",
+        edgecolors="black",
+        linewidths=0.3,
     )
+
+    # counts = edge["calibration_event_count"]
+    # max_row = edge.loc[counts.idxmax()]
+    # min_row = edge.loc[counts.idxmin()]
+    # ratio = float(counts.max()) / float(counts.min())
+
+    # ax.text(
+    #     0.01,
+    #     0.01,
+    #     f"Edge full-period max/min count ratio = {ratio:.2f}\n"
+    #     f"Peak edge = {max_row['component_id']} ({int(max_row['calibration_event_count'])} events); "
+    #     f"min edge = {min_row['component_id']} ({int(min_row['calibration_event_count'])} events)",
+    #     transform=ax.transAxes,
+    #     fontsize=9,
+    #     va="bottom",
+    #     ha="left",
+    #     bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+    # )
 
     ax.set_axis_off()
     fig.tight_layout()

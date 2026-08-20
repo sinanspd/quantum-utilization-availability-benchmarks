@@ -12,13 +12,17 @@ def latest_qubit_dates(
 ) -> dict[int, datetime]:
     latest: dict[int, datetime] = {}
     for row in rows:
-        if row.property_date is None:
+        if row.property_date is None or _is_operational_name(row.property_name):
             continue
         old = latest.get(row.qubit)
         if old is None or row.property_date > old:
             latest[row.qubit] = row.property_date
     for row in gate_rows or []:
-        if len(row.qubits) != 1 or row.property_date is None:
+        if (
+            len(row.qubits) != 1
+            or row.property_date is None
+            or _is_operational_name(row.parameter_name)
+        ):
             continue
         qubit = row.qubits[0]
         old = latest.get(qubit)
@@ -30,12 +34,20 @@ def latest_qubit_dates(
 def latest_edge_dates(rows: list[GatePropertySnapshot]) -> dict[str, datetime]:
     latest: dict[str, datetime] = {}
     for row in rows:
-        if row.edge_id is None or row.property_date is None:
+        if (
+            row.edge_id is None
+            or row.property_date is None
+            or _is_operational_name(row.parameter_name)
+        ):
             continue
         old = latest.get(row.edge_id)
         if old is None or row.property_date > old:
             latest[row.edge_id] = row.property_date
     return latest
+
+
+def _is_operational_name(name: str) -> bool:
+    return name.strip().lower() == "operational"
 
 
 def compute_fetch_cycle_metrics(

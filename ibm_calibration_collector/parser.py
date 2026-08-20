@@ -5,8 +5,10 @@ from typing import Any
 
 from .models import (
     BackendStatusSnapshot,
+    GateOperationalSnapshot,
     GatePropertySnapshot,
     ParsedBackendProperties,
+    QubitOperationalSnapshot,
     QubitPropertySnapshot,
 )
 from .time_utils import parse_datetime
@@ -62,6 +64,7 @@ def parse_properties(
     backend_version = _as_str(properties_json.get("backend_version"))
 
     qubit_rows: list[QubitPropertySnapshot] = []
+    qubit_operational_rows: list[QubitOperationalSnapshot] = []
     qubits = properties_json.get("qubits") or []
     if not isinstance(qubits, list):
         raise TypeError("properties.qubits must be a list")
@@ -69,6 +72,29 @@ def parse_properties(
     for qubit_idx, property_list in enumerate(qubits):
         if not isinstance(property_list, list):
             continue
+        operational_property = _find_named_property(property_list, "operational")
+        operational_reported = _parse_explicit_operational(
+            operational_property,
+            context=f"qubit {qubit_idx}",
+        )
+        qubit_operational_rows.append(
+            QubitOperationalSnapshot(
+                backend=backend,
+                poll_timestamp_utc=poll_timestamp_utc,
+                qubit=qubit_idx,
+                operational_reported=operational_reported,
+                operational_effective=(
+                    operational_reported if operational_reported is not None else True
+                ),
+                operational_is_explicit=operational_property is not None,
+                operational_property_date=(
+                    parse_datetime(operational_property.get("date"))
+                    if operational_property is not None
+                    else None
+                ),
+                raw_operational_property=operational_property,
+            )
+        )
         for prop in property_list:
             if not isinstance(prop, dict):
                 continue
@@ -90,6 +116,7 @@ def parse_properties(
             )
 
     gate_rows: list[GatePropertySnapshot] = []
+    gate_operational_rows: list[GateOperationalSnapshot] = []
     gates = properties_json.get("gates") or []
     if not isinstance(gates, list):
         raise TypeError("properties.gates must be a list")
@@ -110,6 +137,39 @@ def parse_properties(
         parameters = gate.get("parameters") or []
         if not isinstance(parameters, list):
             continue
+        operational_parameter = _find_named_property(parameters, "operational")
+        operational_reported = _parse_explicit_operational(
+            operational_parameter,
+            context=f"gate {gate_name}@{qubits_key}",
+        )
+        if operational_parameter is None and "operational" in gate:
+            operational_reported = _parse_operational_value(
+                gate.get("operational"),
+                context=f"gate {gate_name}@{qubits_key}",
+            )
+        operational_is_explicit = operational_parameter is not None or "operational" in gate
+        gate_operational_rows.append(
+            GateOperationalSnapshot(
+                backend=backend,
+                poll_timestamp_utc=poll_timestamp_utc,
+                gate_name=gate_name,
+                qubits=qubits,
+                qubits_key=qubits_key,
+                edge_id=edge_id,
+                operational_reported=operational_reported,
+                operational_effective=(
+                    operational_reported if operational_reported is not None else True
+                ),
+                operational_is_explicit=operational_is_explicit,
+                operational_property_date=(
+                    parse_datetime(operational_parameter.get("date"))
+                    if operational_parameter is not None
+                    else None
+                ),
+                raw_gate=gate,
+                raw_operational_parameter=operational_parameter,
+            )
+        )
         for param in parameters:
             if not isinstance(param, dict):
                 continue
@@ -139,6 +199,8 @@ def parse_properties(
         properties_last_update_date=last_update,
         qubit_properties=qubit_rows,
         gate_properties=gate_rows,
+        qubit_operational_snapshots=qubit_operational_rows,
+        gate_operational_snapshots=gate_operational_rows,
     )
 
 
@@ -205,6 +267,41 @@ def _as_bool(value: Any) -> bool | None:
         if lowered in {"false", "0", "no"}:
             return False
     return bool(value)
+
+
+def _find_named_property(items: list[Any], name: str) -> dict[str, Any] | None:
+    normalized_name = name.strip().lower()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_name = _as_str(item.get("name"))
+        if item_name is not None and item_name.strip().lower() == normalized_name:
+            return item
+    return None
+
+
+def _parse_explicit_operational(
+    operational_property: dict[str, Any] | None,
+    *,
+    context: str,
+) -> bool | None:
+    if operational_property is None:
+        return None
+    return _parse_operational_value(operational_property.get("value"), context=context)
+
+
+def _parse_operational_value(value: Any, *, context: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    raise ValueError(f"invalid operational value for {context}: {value!r}")
 
 
 def _first_bool(*values: Any) -> bool | None:

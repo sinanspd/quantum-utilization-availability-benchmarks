@@ -159,6 +159,11 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="Run one fetch cycle and exit.")
     parser.add_argument("--init-db", action="store_true", help="Apply sql/schema.sql before collecting.")
     parser.add_argument(
+        "--init-db-only",
+        action="store_true",
+        help="Apply sql/schema.sql and exit without calling IBM APIs.",
+    )
+    parser.add_argument(
         "--interval-seconds",
         type=int,
         default=None,
@@ -183,6 +188,13 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
+    if args.init_db_only:
+        database_url = os.getenv("DATABASE_URL")
+        if database_url is None or not database_url.strip():
+            raise ValueError("Missing required environment variable: DATABASE_URL")
+        PostgresStore(database_url.strip()).ensure_schema()
+        LOG.info("database schema ready")
+        return
     config = CollectorConfig.from_env()
     if args.interval_seconds is not None:
         config = replace(config, collect_interval_seconds=args.interval_seconds)

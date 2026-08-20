@@ -13,8 +13,10 @@ from psycopg.types.json import Jsonb
 from .models import (
     BackendStatusSnapshot,
     FetchCycleMetrics,
+    GateOperationalSnapshot,
     GatePropertySnapshot,
     ParsedBackendProperties,
+    QubitOperationalSnapshot,
     QubitPropertySnapshot,
 )
 
@@ -62,12 +64,15 @@ class PostgresStore:
                 FROM (
                   SELECT qubit, property_date
                   FROM qubit_property_snapshots
-                  WHERE fetch_cycle_id = %s AND property_date IS NOT NULL
+                  WHERE fetch_cycle_id = %s
+                    AND lower(property_name) <> 'operational'
+                    AND property_date IS NOT NULL
                   UNION ALL
                   SELECT qubits[1] AS qubit, property_date
                   FROM gate_property_snapshots
                   WHERE fetch_cycle_id = %s
                     AND cardinality(qubits) = 1
+                    AND lower(parameter_name) <> 'operational'
                     AND property_date IS NOT NULL
                 ) AS qubit_calibration_dates
                 GROUP BY qubit
@@ -80,6 +85,7 @@ class PostgresStore:
                 FROM gate_property_snapshots
                 WHERE fetch_cycle_id = %s
                   AND edge_id IS NOT NULL
+                  AND lower(parameter_name) <> 'operational'
                   AND property_date IS NOT NULL
                 GROUP BY edge_id
                 """,
@@ -138,6 +144,16 @@ class PostgresStore:
                     conn, fetch_cycle_id, parsed_properties.qubit_properties
                 )
                 self._insert_gate_properties(conn, fetch_cycle_id, parsed_properties.gate_properties)
+                self._insert_qubit_operational_snapshots(
+                    conn,
+                    fetch_cycle_id,
+                    parsed_properties.qubit_operational_snapshots,
+                )
+                self._insert_gate_operational_snapshots(
+                    conn,
+                    fetch_cycle_id,
+                    parsed_properties.gate_operational_snapshots,
+                )
                 self._insert_metrics(conn, fetch_cycle_id, metrics)
         return fetch_cycle_id
 
@@ -256,6 +272,87 @@ class PostgresStore:
                   fetch_cycle_id, backend, poll_timestamp_utc, properties_last_update_date,
                   gate_name, qubits, qubits_key, edge_id, parameter_name,
                   value, unit, property_date, raw_parameter
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                values,
+            )
+
+    @staticmethod
+    def _insert_qubit_operational_snapshots(
+        conn: Connection[Any],
+        fetch_cycle_id: str,
+        rows: list[QubitOperationalSnapshot],
+    ) -> None:
+        if not rows:
+            return
+        values = [
+            (
+                fetch_cycle_id,
+                r.backend,
+                r.poll_timestamp_utc,
+                r.qubit,
+                r.operational_reported,
+                r.operational_effective,
+                r.operational_is_explicit,
+                r.operational_property_date,
+                (
+                    Jsonb(r.raw_operational_property)
+                    if r.raw_operational_property is not None
+                    else None
+                ),
+            )
+            for r in rows
+        ]
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO qubit_operational_snapshots (
+                  fetch_cycle_id, backend, poll_timestamp_utc, qubit,
+                  operational_reported, operational_effective, operational_is_explicit,
+                  operational_property_date, raw_operational_property
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                values,
+            )
+
+    @staticmethod
+    def _insert_gate_operational_snapshots(
+        conn: Connection[Any],
+        fetch_cycle_id: str,
+        rows: list[GateOperationalSnapshot],
+    ) -> None:
+        if not rows:
+            return
+        values = [
+            (
+                fetch_cycle_id,
+                r.backend,
+                r.poll_timestamp_utc,
+                r.gate_name,
+                r.qubits,
+                r.qubits_key,
+                r.edge_id,
+                r.operational_reported,
+                r.operational_effective,
+                r.operational_is_explicit,
+                r.operational_property_date,
+                Jsonb(r.raw_gate),
+                (
+                    Jsonb(r.raw_operational_parameter)
+                    if r.raw_operational_parameter is not None
+                    else None
+                ),
+            )
+            for r in rows
+        ]
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO gate_operational_snapshots (
+                  fetch_cycle_id, backend, poll_timestamp_utc, gate_name, qubits,
+                  qubits_key, edge_id, operational_reported, operational_effective,
+                  operational_is_explicit, operational_property_date, raw_gate,
+                  raw_operational_parameter
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 values,

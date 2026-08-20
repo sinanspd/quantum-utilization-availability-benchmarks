@@ -21,6 +21,12 @@ def test_parse_and_metrics():
             [
                 {"name": "T1", "value": 0.0001, "unit": "s", "date": "2026-06-15T11:00:00Z"},
                 {"name": "readout_error", "value": 0.01, "unit": "", "date": "2026-06-15T11:30:00Z"},
+                {
+                    "name": "operational",
+                    "value": 1,
+                    "unit": "",
+                    "date": "2026-06-15T11:59:00Z",
+                },
             ],
             [
                 {"name": "T1", "value": 0.0002, "unit": "s", "date": "2026-06-15T10:00:00Z"},
@@ -36,7 +42,13 @@ def test_parse_and_metrics():
                         "value": 0.001,
                         "unit": "",
                         "date": "2026-06-15T11:40:00Z",
-                    }
+                    },
+                    {
+                        "name": "operational",
+                        "value": "true",
+                        "unit": "",
+                        "date": "2026-06-15T11:58:00Z",
+                    },
                 ],
             },
             {
@@ -45,8 +57,15 @@ def test_parse_and_metrics():
                 "parameters": [
                     {"name": "gate_error", "value": 0.002, "unit": "", "date": "2026-06-15T11:15:00Z"},
                     {"name": "gate_length", "value": 1e-7, "unit": "s", "date": "2026-06-15T11:20:00Z"},
+                    {
+                        "name": "operational",
+                        "value": 0,
+                        "unit": "",
+                        "date": "2026-06-15T11:59:00Z",
+                    },
                 ],
-            }
+            },
+            {"gate": "x", "qubits": ["1"], "parameters": []},
         ],
     }
     parsed = parse_properties("ibm_test", props, poll, edge_id_mode="undirected")
@@ -55,6 +74,27 @@ def test_parse_and_metrics():
     assert q_dates[0].isoformat() == "2026-06-15T11:40:00+00:00"
     assert q_dates[1].isoformat() == "2026-06-15T10:00:00+00:00"
     assert e_dates["0-1"].isoformat() == "2026-06-15T11:20:00+00:00"
+
+    q0_operational, q1_operational = parsed.qubit_operational_snapshots
+    assert q0_operational.operational_reported is True
+    assert q0_operational.operational_effective is True
+    assert q0_operational.operational_is_explicit is True
+    assert q0_operational.operational_property_date.isoformat() == "2026-06-15T11:59:00+00:00"
+    assert q1_operational.operational_reported is None
+    assert q1_operational.operational_effective is True
+    assert q1_operational.operational_is_explicit is False
+
+    sx_operational, cz_operational, x_operational = parsed.gate_operational_snapshots
+    assert sx_operational.edge_id is None
+    assert sx_operational.operational_reported is True
+    assert sx_operational.operational_is_explicit is True
+    assert cz_operational.edge_id == "0-1"
+    assert cz_operational.operational_reported is False
+    assert cz_operational.operational_effective is False
+    assert cz_operational.operational_is_explicit is True
+    assert x_operational.operational_reported is None
+    assert x_operational.operational_effective is True
+    assert x_operational.operational_is_explicit is False
 
     metrics = compute_fetch_cycle_metrics(
         backend="ibm_test",
@@ -119,6 +159,17 @@ def test_parse_properties_requires_qubits_and_gates():
         match="backend properties JSON missing required qubits/gates fields",
     ):
         parse_properties("ibm_test", {"qubits": []}, poll)
+
+
+def test_parse_properties_rejects_unknown_operational_values():
+    poll = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
+    properties = {
+        "qubits": [[{"name": "operational", "value": "maybe"}]],
+        "gates": [],
+    }
+
+    with pytest.raises(ValueError, match="invalid operational value for qubit 0"):
+        parse_properties("ibm_test", properties, poll)
 
 
 def test_ibm_client_rejects_json_error_payload(monkeypatch):

@@ -71,6 +71,7 @@ def load_analysis_data(
           poll_timestamp_utc AS observed_at_utc
         FROM qubit_property_snapshots
         WHERE {where}
+          AND lower(property_name) <> 'operational'
           AND property_date IS NOT NULL
           AND value IS NOT NULL
         ORDER BY backend, qubit, property_name, COALESCE(unit, ''), property_date,
@@ -95,6 +96,7 @@ def load_analysis_data(
         FROM gate_property_snapshots
         WHERE {where}
           AND edge_id IS NOT NULL
+          AND lower(parameter_name) <> 'operational'
           AND property_date IS NOT NULL
           AND value IS NOT NULL
         ORDER BY backend, edge_id, gate_name, qubits_key, parameter_name,
@@ -119,6 +121,7 @@ def load_analysis_data(
         FROM gate_property_snapshots
         WHERE {where}
           AND cardinality(qubits) = 1
+          AND lower(parameter_name) <> 'operational'
           AND property_date IS NOT NULL
           AND value IS NOT NULL
         ORDER BY backend, qubits_key, gate_name, parameter_name,

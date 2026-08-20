@@ -48,12 +48,42 @@ class GatePropertySnapshot:
 
 
 @dataclass(frozen=True)
+class QubitOperationalSnapshot:
+    backend: str
+    poll_timestamp_utc: datetime
+    qubit: int
+    operational_reported: bool | None
+    operational_effective: bool
+    operational_is_explicit: bool
+    operational_property_date: datetime | None
+    raw_operational_property: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class GateOperationalSnapshot:
+    backend: str
+    poll_timestamp_utc: datetime
+    gate_name: str
+    qubits: list[int]
+    qubits_key: str
+    edge_id: str | None
+    operational_reported: bool | None
+    operational_effective: bool
+    operational_is_explicit: bool
+    operational_property_date: datetime | None
+    raw_gate: dict[str, Any]
+    raw_operational_parameter: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
 class ParsedBackendProperties:
     backend: str
     backend_version: str | None
     properties_last_update_date: datetime | None
     qubit_properties: list[QubitPropertySnapshot]
     gate_properties: list[GatePropertySnapshot]
+    qubit_operational_snapshots: list[QubitOperationalSnapshot]
+    gate_operational_snapshots: list[GateOperationalSnapshot]
 
 
 @dataclass(frozen=True)

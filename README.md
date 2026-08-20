@@ -8,6 +8,8 @@ It stores:
 - raw backend properties JSON
 - per-qubit property rows, including value/unit/timestamp
 - per-gate/per-edge property rows, including value/unit/timestamp
+- per-qubit and per-gate operational snapshots, including whether IBM explicitly reported the flag
+- an edge-level operational view that also accounts for the two endpoint qubits
 - one derived metrics row per backend per fetch cycle
 
 The derived metrics include the six requested fields:
@@ -66,6 +68,31 @@ max_edge_calibration_age_seconds = now - min_e(latest_edge_calibration_time(e))
 
 The `now` used is the fetch-cycle completion timestamp, stored as `poll_timestamp_utc` in `fetch_cycle_metrics`.
 
+### Qubit, gate, and edge operational state
+
+IBM reports operational state on individual qubits and gate instructions. The collector writes
+one row per qubit to `qubit_operational_snapshots` and one row per gate instruction to
+`gate_operational_snapshots` on every successful fetch, including gates with no numeric
+calibration parameters.
+
+Each row distinguishes three related concepts:
+
+- `operational_reported`: IBM's explicit value, or `NULL` when the property was absent.
+- `operational_is_explicit`: whether IBM actually supplied the value.
+- `operational_effective`: the value used by Qiskit's backend-properties semantics, where an
+  absent operational property defaults to `TRUE`.
+
+The `edge_operational_snapshots` view aggregates all two-qubit gate instructions sharing the
+same physical `edge_id`. It exposes both `any_gate_operational_effective` and
+`all_gates_operational_effective`. Its convenience field `edge_operational_effective` is true
+when at least one two-qubit instruction is operational and both endpoint qubits are operational.
+Use `edge_operational_is_fully_explicit` to distinguish a fully reported state from one that
+depends on the missing-value default.
+
+Operational properties are retained in the raw/generic property data for auditability, but they
+are excluded from calibration-frequency and numeric-drift calculations because an availability
+flag is not a calibration-quality measurement.
+
 ## Setup
 
 ```bash
@@ -95,6 +122,12 @@ Run one collection cycle and initialize the schema:
 
 ```bash
 python -m ibm_calibration_collector.collector --init-db --once
+```
+
+Apply the schema without collecting:
+
+```bash
+python -m ibm_calibration_collector.collector --init-db-only
 ```
 
 Run continuously:
@@ -149,6 +182,28 @@ WHERE parameter_name = 'gate_error'
 ORDER BY poll_timestamp_utc DESC, edge_id;
 ```
 
+Latest gate-level operational state for two-qubit instructions:
+
+```sql
+SELECT backend, poll_timestamp_utc, edge_id, gate_name, qubits,
+       operational_reported, operational_effective, operational_is_explicit
+FROM gate_operational_snapshots
+WHERE edge_id IS NOT NULL
+ORDER BY poll_timestamp_utc DESC, backend, edge_id, gate_name;
+```
+
+Latest physical-edge operational state:
+
+```sql
+SELECT DISTINCT ON (backend, edge_id)
+       backend, poll_timestamp_utc, edge_id,
+       edge_operational_effective, edge_operational_is_fully_explicit,
+       any_gate_operational_effective, all_gates_operational_effective,
+       all_endpoint_qubits_operational_effective
+FROM edge_operational_snapshots
+ORDER BY backend, edge_id, poll_timestamp_utc DESC;
+```
+
 Interval-level view useful for later regression work:
 
 ```sql
@@ -161,6 +216,9 @@ ORDER BY backend, interval_end;
 ## Notes
 
 This collector does not submit quantum jobs. It only calls IBM Quantum Runtime REST endpoints for backend status and backend properties.
+
+The operational snapshot tables begin filling only after this schema and collector version are
+deployed. Existing property rows are not implicitly rewritten.
 
 Queue length is stored as `pending_jobs` and should be interpreted as a demand-pressure proxy, not as direct physical QPU utilization.
 
@@ -274,3 +332,7 @@ heroku logs --tail --app qurator-calibration-collector --dyno run.N
 
 If Heroku cycles the dyno, submit the same detached command again; it resumes from the last
 committed batch.
+
+The `Procfile` includes a Heroku release phase that applies `sql/schema.sql` before the updated
+collector process starts. The migration is idempotent and the new operational tables are empty,
+so deploying this version does not rewrite the existing multi-million-row property tables.

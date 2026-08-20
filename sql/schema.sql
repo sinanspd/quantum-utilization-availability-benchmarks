@@ -104,6 +104,57 @@ CREATE INDEX IF NOT EXISTS idx_gate_props_fetch_cycle_edge_calibration
   ON gate_property_snapshots (fetch_cycle_id, edge_id, property_date DESC)
   WHERE edge_id IS NOT NULL AND property_date IS NOT NULL;
 
+-- IBM exposes operational state as a property on individual qubits and gate
+-- instructions. Keep the explicit API value separate from the Qiskit-compatible
+-- effective value: when the property is absent, Qiskit treats the component as
+-- operational, while operational_is_explicit remains false here.
+CREATE TABLE IF NOT EXISTS qubit_operational_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  fetch_cycle_id UUID NOT NULL REFERENCES fetch_cycles(id) ON DELETE CASCADE,
+  backend TEXT NOT NULL,
+  poll_timestamp_utc TIMESTAMPTZ NOT NULL,
+  qubit INTEGER NOT NULL,
+  operational_reported BOOLEAN,
+  operational_effective BOOLEAN NOT NULL,
+  operational_is_explicit BOOLEAN NOT NULL,
+  operational_property_date TIMESTAMPTZ,
+  raw_operational_property JSONB,
+  CHECK (operational_is_explicit = (operational_reported IS NOT NULL)),
+  CHECK (operational_effective = COALESCE(operational_reported, TRUE))
+);
+
+CREATE INDEX IF NOT EXISTS idx_qubit_operational_backend_qubit_poll
+  ON qubit_operational_snapshots (backend, qubit, poll_timestamp_utc DESC);
+
+CREATE INDEX IF NOT EXISTS idx_qubit_operational_fetch_cycle
+  ON qubit_operational_snapshots (fetch_cycle_id, qubit);
+
+CREATE TABLE IF NOT EXISTS gate_operational_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  fetch_cycle_id UUID NOT NULL REFERENCES fetch_cycles(id) ON DELETE CASCADE,
+  backend TEXT NOT NULL,
+  poll_timestamp_utc TIMESTAMPTZ NOT NULL,
+  gate_name TEXT NOT NULL,
+  qubits INTEGER[] NOT NULL,
+  qubits_key TEXT NOT NULL,
+  edge_id TEXT,
+  operational_reported BOOLEAN,
+  operational_effective BOOLEAN NOT NULL,
+  operational_is_explicit BOOLEAN NOT NULL,
+  operational_property_date TIMESTAMPTZ,
+  raw_gate JSONB NOT NULL,
+  raw_operational_parameter JSONB,
+  CHECK (operational_is_explicit = (operational_reported IS NOT NULL)),
+  CHECK (operational_effective = COALESCE(operational_reported, TRUE))
+);
+
+CREATE INDEX IF NOT EXISTS idx_gate_operational_backend_gate_poll
+  ON gate_operational_snapshots (backend, gate_name, qubits_key, poll_timestamp_utc DESC);
+
+CREATE INDEX IF NOT EXISTS idx_gate_operational_backend_edge_poll
+  ON gate_operational_snapshots (backend, edge_id, poll_timestamp_utc DESC)
+  WHERE edge_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS fetch_cycle_metrics (
   fetch_cycle_id UUID PRIMARY KEY REFERENCES fetch_cycles(id) ON DELETE CASCADE,
   backend TEXT NOT NULL,
@@ -207,3 +258,105 @@ SELECT
 FROM fetch_cycle_metrics m
 JOIN fetch_cycles f ON f.id = m.fetch_cycle_id
 LEFT JOIN backend_status_snapshots s ON s.fetch_cycle_id = m.fetch_cycle_id;
+
+-- A physical edge can have multiple directed/native two-qubit gate instructions.
+-- This view preserves both optimistic (any instruction works) and strict (all work)
+-- gate aggregates, and combines the optimistic aggregate with endpoint-qubit state.
+CREATE OR REPLACE VIEW edge_operational_snapshots AS
+WITH edge_gates AS (
+  SELECT
+    fetch_cycle_id,
+    backend,
+    poll_timestamp_utc,
+    edge_id,
+    bool_or(operational_effective) AS any_gate_operational_effective,
+    bool_and(operational_effective) AS all_gates_operational_effective,
+    bool_and(operational_is_explicit) AS all_gate_statuses_explicit,
+    count(*) AS gate_count,
+    count(*) FILTER (WHERE operational_is_explicit) AS explicit_gate_status_count,
+    jsonb_agg(
+      jsonb_build_object(
+        'gate_name', gate_name,
+        'qubits', qubits,
+        'qubits_key', qubits_key,
+        'operational_reported', operational_reported,
+        'operational_effective', operational_effective,
+        'operational_is_explicit', operational_is_explicit,
+        'operational_property_date', operational_property_date
+      ) ORDER BY gate_name, qubits_key
+    ) AS gate_statuses
+  FROM gate_operational_snapshots
+  WHERE edge_id IS NOT NULL
+  GROUP BY fetch_cycle_id, backend, poll_timestamp_utc, edge_id
+),
+edge_endpoints AS (
+  SELECT DISTINCT
+    gate.fetch_cycle_id,
+    gate.backend,
+    gate.poll_timestamp_utc,
+    gate.edge_id,
+    endpoint.qubit
+  FROM gate_operational_snapshots gate
+  CROSS JOIN LATERAL unnest(gate.qubits) AS endpoint(qubit)
+  WHERE gate.edge_id IS NOT NULL
+),
+endpoint_status AS (
+  SELECT
+    endpoint.fetch_cycle_id,
+    endpoint.backend,
+    endpoint.poll_timestamp_utc,
+    endpoint.edge_id,
+    count(*) AS endpoint_count,
+    count(*) FILTER (WHERE qubit.operational_is_explicit) AS explicit_endpoint_status_count,
+    bool_and(COALESCE(qubit.operational_effective, TRUE))
+      AS all_endpoint_qubits_operational_effective,
+    bool_and(COALESCE(qubit.operational_is_explicit, FALSE))
+      AS all_endpoint_statuses_explicit,
+    jsonb_agg(
+      jsonb_build_object(
+        'qubit', endpoint.qubit,
+        'operational_reported', qubit.operational_reported,
+        'operational_effective', COALESCE(qubit.operational_effective, TRUE),
+        'operational_is_explicit', COALESCE(qubit.operational_is_explicit, FALSE),
+        'operational_property_date', qubit.operational_property_date
+      ) ORDER BY endpoint.qubit
+    ) AS endpoint_statuses
+  FROM edge_endpoints endpoint
+  LEFT JOIN qubit_operational_snapshots qubit
+    ON qubit.fetch_cycle_id = endpoint.fetch_cycle_id
+   AND qubit.qubit = endpoint.qubit
+  GROUP BY
+    endpoint.fetch_cycle_id,
+    endpoint.backend,
+    endpoint.poll_timestamp_utc,
+    endpoint.edge_id
+)
+SELECT
+  gates.fetch_cycle_id,
+  gates.backend,
+  gates.poll_timestamp_utc,
+  gates.edge_id,
+  gates.any_gate_operational_effective,
+  gates.all_gates_operational_effective,
+  endpoints.all_endpoint_qubits_operational_effective,
+  (
+    gates.any_gate_operational_effective
+    AND endpoints.all_endpoint_qubits_operational_effective
+  ) AS edge_operational_effective,
+  (
+    gates.all_gate_statuses_explicit
+    AND endpoints.all_endpoint_statuses_explicit
+  ) AS edge_operational_is_fully_explicit,
+  gates.gate_count,
+  gates.explicit_gate_status_count,
+  endpoints.endpoint_count,
+  endpoints.explicit_endpoint_status_count,
+  gates.gate_statuses,
+  endpoints.endpoint_statuses
+FROM edge_gates gates
+JOIN endpoint_status endpoints USING (
+  fetch_cycle_id,
+  backend,
+  poll_timestamp_utc,
+  edge_id
+);

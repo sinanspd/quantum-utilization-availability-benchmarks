@@ -121,7 +121,8 @@ FROM (
   SELECT snapshot.fetch_cycle_id, snapshot.qubit, snapshot.property_date
   FROM qubit_property_snapshots snapshot
   JOIN valid_fetch_cycles valid ON valid.fetch_cycle_id = snapshot.fetch_cycle_id
-  WHERE snapshot.property_date IS NOT NULL
+  WHERE lower(snapshot.property_name) <> 'operational'
+    AND snapshot.property_date IS NOT NULL
 
   UNION ALL
 
@@ -129,6 +130,7 @@ FROM (
   FROM gate_property_snapshots snapshot
   JOIN valid_fetch_cycles valid ON valid.fetch_cycle_id = snapshot.fetch_cycle_id
   WHERE cardinality(snapshot.qubits) = 1
+    AND lower(snapshot.parameter_name) <> 'operational'
     AND snapshot.property_date IS NOT NULL
 ) dates
 GROUP BY dates.fetch_cycle_id, dates.qubit;
@@ -143,6 +145,7 @@ SELECT
 FROM gate_property_snapshots snapshot
 JOIN valid_fetch_cycles valid ON valid.fetch_cycle_id = snapshot.fetch_cycle_id
 WHERE snapshot.edge_id IS NOT NULL
+  AND lower(snapshot.parameter_name) <> 'operational'
   AND snapshot.property_date IS NOT NULL
 GROUP BY snapshot.fetch_cycle_id, snapshot.edge_id;
 
