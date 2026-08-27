@@ -1,5 +1,6 @@
 .DS_Store
 .env
+followup_output.zip
 output.zip
 followup_output/
 paper_assets/
