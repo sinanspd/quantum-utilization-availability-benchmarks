@@ -11,3 +11,6 @@ tests/__pycache__/
 output/
 .venv/
 *.egg-info/
+calibration_anchor_alignment.zip
+compiler_edge_selection_output.zip
+compiler_edge_selection_output/
